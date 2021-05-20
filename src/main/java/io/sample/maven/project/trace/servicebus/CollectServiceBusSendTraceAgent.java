@@ -3,10 +3,13 @@ package io.sample.maven.project.trace.servicebus;
 import com.azure.core.util.IterableStream;
 import com.azure.messaging.servicebus.ServiceBusClientBuilder;
 import com.azure.messaging.servicebus.ServiceBusMessage;
+import com.azure.messaging.servicebus.ServiceBusProcessorClient;
 import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
 import com.azure.messaging.servicebus.ServiceBusSenderClient;
 import com.azure.messaging.servicebus.ServiceBusSessionReceiverClient;
 import com.azure.messaging.servicebus.models.ServiceBusReceiveMode;
+
+import java.util.concurrent.CountDownLatch;
 
 public class CollectServiceBusSendTraceAgent {
 
@@ -38,17 +41,23 @@ public class CollectServiceBusSendTraceAgent {
         }
         System.out.println("Sent 4 messages");
 
-        ServiceBusSessionReceiverClient serviceBusReceiverClient = new ServiceBusClientBuilder()
+        CountDownLatch countDownLatch = new CountDownLatch(4);
+        ServiceBusProcessorClient serviceBusProcessorClient = new ServiceBusClientBuilder()
                 .connectionString(serviceBusConnectionString)
-                .sessionReceiver()
+                .sessionProcessor()
                 .receiveMode(ServiceBusReceiveMode.PEEK_LOCK)
                 .queueName("test-session-sb")
-                .buildClient();
-        IterableStream<ServiceBusReceivedMessage> serviceBusReceivedMessages = serviceBusReceiverClient
-                .acceptSession("tennis")
-                .receiveMessages(4);
-        serviceBusReceivedMessages.forEach(message -> System.out.println("Received message " + message.getMessageId()));
-        serviceBusSenderClient.close();
-        serviceBusReceiverClient.close();
+                .processMessage(context -> {
+                    System.out.println("Received message " + context.getMessage().getMessageId());
+                    countDownLatch.countDown();
+                })
+                .processError(error -> System.out.println("Error while processing message " + error.getException().getMessage()))
+                .buildProcessorClient();
+
+        serviceBusProcessorClient.start();
+        countDownLatch.await();
+        System.out.println("Stopping processor");
+        serviceBusProcessorClient.stop();
     }
+
 }
